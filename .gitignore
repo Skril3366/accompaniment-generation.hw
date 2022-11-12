@@ -133,3 +133,6 @@ dmypy.json
 *.fdb_latexmk
 *.fls
 *.gz
+
+# macOS
+.DS_Store
