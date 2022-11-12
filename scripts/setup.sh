@@ -2,11 +2,10 @@
 
 source ./env/bin/activate
 source ./scripts/run.sh
+source ./scripts/deps.sh
 
-# Install dependencies
-echo "Installing dependencies specified in requirements.txt"
-pip install -r requirements.txt
+cat ./scripts/name.txt
 
-echo
-echo "All the dependencies are installed"
-echo "To run the application use \`run\` command with corresponding arguments"
+echo "The following commands are added on top standard python env commands:"
+__run__info
+__deps__info
