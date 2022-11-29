@@ -1,0 +1,111 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{cases}
+\usepackage{amsfonts}
+\usepackage [a4paper, left=1cm, right=2cm, top=2cm, bottom=4cm]{geometry}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{graphicx}
+
+\title{Accompaniment Generation}
+\author{Alexandr Ragulin}
+
+% \documentclass[11pt, twocolumn]{article}
+
+% \graphicspath{ {./img/} }
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  filecolor=magenta,
+  urlcolor=blue,
+  pdfpagemode=FullScreen,
+}
+
+
+
+\begin{document}
+\maketitle
+
+\section{Running the program}
+Full project is uploaded to the github repository:
+\href{https://github.com/Skril3366/accompaniment-generation.hw}{https://github.com/Skril3366/accompaniment-generation.hw}.
+The process of running program is described in the README.md file and
+dependencies are specified in the requirements.txt file.
+
+\subsection{Requirements}
+
+\begin{itemize}
+  \item Python 3.10.8 or higher
+  \item pygame 2.1.2
+  \item mido 1.2.10
+  \item music21 8.1.0
+  \item argparse 1.4.0
+\end{itemize}
+
+\subsection{Running the program}
+
+The only argument required is path to the midi file. Here is sample command:
+\begin{verbatim}
+python3 AlexandrRagulin.py ./resources/babiegirl_mono.mid
+\end{verbatim}
+
+\section{Detected keys}
+
+\begin{itemize}
+  \item barbiegirl\_mono.mid: C\#m
+  \item input1.mid: Dm
+  \item input2.mid: F
+  \item input3.mid: Em
+\end{itemize}
+
+\section{Key detection algorithm}
+
+For detection key of the song I used Krumhansl-Shmuckler algorithm. It uses
+statistical analysis of the relative frequencies of the notes.
+
+I've attempted to implement it, however, I didn't manage to find a bug in my
+implementation, so I decided to stick to one provided by music21 library.
+
+\section{Genetic algorithm}
+
+My implementation of genetic algorithm generates new population by applying the
+following procedured to the previous one:
+\begin{itemize}
+  \item Crossover
+  \item Mutation
+\end{itemize}
+
+Firstly, an "elite"(ones with the best fitness function) is selected from the
+population, then the crossover is performed on the best ones(number of elites
+and number of individuals to crossover may not be the same). Then this two lists
+of individuals are merged and mutation is performed on them.
+
+\subsection{Fitness function}
+
+Fitness function consists of 2 parts:
+\begin{itemize}
+  \item Vertical fitness
+  \item Horizontal fitness
+\end{itemize}
+
+Vertical fitness is calculated by examining how much dissonant notes are played
+at the same time.
+
+Horizontal fitness is calculated by:
+\begin{itemize}
+  \item Number of dissonant notes played one after another
+  \item Correctness of harmonic movement of the chords
+  \item Penalty for repeating chords (the closer repeated chords, the worse)
+\end{itemize}
+
+Harmonic movement (from one chord to another) is prioritized if it is:
+\begin{itemize}
+  \item Dominant $\rightarrow$ tonic
+  \item Subdominant $\rightarrow$ dominant or tonic
+  \item Tonic $\rightarrow$ subdominant or dominant
+\end{itemize}
+
+
+
+\end{document}
