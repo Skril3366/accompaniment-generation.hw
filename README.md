@@ -3,7 +3,9 @@
 ## Directory navigation
 
 - `src`  full source code separated into a bunch of files
-- `build`  full source code in one file
+- `tex`  contains report in latex and pdf formats
+- `resources`  contains inputs and outputs
+
 
 ## Usage
 
