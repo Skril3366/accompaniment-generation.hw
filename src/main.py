@@ -3,8 +3,8 @@ from dataclasses import astuple, dataclass
 from enum import Enum
 from fractions import Fraction
 from math import gcd
-from random import randint, random, choice
-from typing import Generic, NamedTuple, TypeVar
+from random import choice, randint, random
+from typing import Callable, Generic, NamedTuple, TypeVar
 
 import mido
 import music21
@@ -206,6 +206,18 @@ class Timeline(NamedTuple):
                 self.chords[-1].start + self.chords[-1].event.duration,
             )
 
+    def to_dict(self) -> dict[Duration, list[Note]]:
+        res = {}
+        for melody_event in self.melody:
+            if melody_event.start not in res:
+                res[melody_event.start] = []
+            res[melody_event.start].append(melody_event.event)
+        for chord_event in self.chords:
+            if chord_event.start not in res:
+                res[chord_event.start] = []
+            res[chord_event.start].extend(chord_event.event.notes)
+        return res
+
 
 class Mode(Enum):
     """A class representing a mode"""
@@ -359,7 +371,7 @@ def __get_scale_music21(midi_file_path: str) -> Scale:
     return Scale(root, mode)
 
 
-def get_composition(midi_file_path: str):
+def get_composition(midi_file_path: str) -> Composition:
     midi_file = read_midi_file(midi_file_path)
     clocks = __get_clocks_per_beat(midi_file)
     time_signature = __get_time_signature(midi_file)
@@ -374,6 +386,58 @@ def get_composition(midi_file_path: str):
         timeline=timeline,
         length=timeline.get_length(),
     )
+
+# TODO: implement
+# def chords_to_midi_messages(
+#     chords: list[Event_in_time[Chord]], clocks_per_beat: int, time_signature: Time_signature
+# ) -> list[mido.Message]:
+#     """Convert a list of chords to a list of midi messages"""
+#     messages: list[mido.Message] = []
+    # current_time = Fraction(0, 1)
+    # for chord in chords:
+    #     for note in chord.notes:
+    #         if isinstance(note, Note):
+    #             messages.append(
+    #                 mido.Message(
+    #                     'note_on',
+    #                     note=note.pitch,
+    #                     velocity=50,
+    #                     time=int(
+    #                         current_time
+    #                         * clocks_per_beat
+    #                         * 4
+    #                         / Fraction(time_signature.denominator, 1)
+    #                     ),
+    #                 )
+    #             )
+    #         else:
+    #             raise ValueError('Chord should consist of notes with fixed pitch')
+    #     current_time += Fraction(chord.duration.numerator, chord.duration.denominator)
+    #     for note in chord.notes:
+    #         if isinstance(note, Note):
+    #             messages.append(
+    #                 mido.Message(
+    #                     'note_off',
+    #                     note=note.pitch,
+    #                     velocity=50,
+    #                     time=int(
+    #                         current_time
+    #                         * clocks_per_beat
+    #                         * 4
+    #                         / Fraction(time_signature.denominator, 1)
+    #                     ),
+    #                 )
+    #             )
+    #         else:
+    #             raise ValueError('Chord should consist of notes with fixed pitch')
+    # return messages
+
+# def add_chords_to_midi(midi_file : mido.MidiFile, list[Chord]) -> mido.MidiFile:
+#     """Add chords to a midi file"""
+#     for chord in list[Chord]:
+#         if isinstance(chord.notes, list[Note]):
+#             for note in chord.notes:
+#                 midi_file.tracks[1].append(mido.Message('note_on', note=note.pitch)
 
 
 def get_basic_chords_in_scale(scale: Scale, duration: Duration) -> list[Chord]:
@@ -408,8 +472,107 @@ class Population(NamedTuple):
         return Population(self.individuals.copy())
 
 
-def fitness(individual: Individual) -> float:
+def pitch_difference_to_fitness(pitch_difference: int) -> float:
+    """Return the fitness of a pitch difference"""
+    difference_in_octave = abs(pitch_difference) % 12
+    if (difference_in_octave == 0 or
+        difference_in_octave == 5):
+        return 1
+    elif (difference_in_octave == 1 or
+          difference_in_octave == 11):
+        return 0.3
+    elif (difference_in_octave == 2 or
+          difference_in_octave == 10):
+        return 0.4
+    elif (difference_in_octave == 3 or
+          difference_in_octave == 4 or
+          difference_in_octave == 7 or
+          difference_in_octave == 8 or
+          difference_in_octave == 9):
+        return 0.5
+    elif difference_in_octave == 6:
+        return 0.1
+    else:
+        raise ValueError('Invalid pitch difference')
+
+def dissonance_fitness(note1: Note | Key, note2: Note | Key,
+                       dissonance_octave_coefficient: float) -> float:
     """Return the fitness of an individual"""
+    # check if notes are of type Note
+    difference = 0
+    interval = 0
+    octave_difference = 0
+    if isinstance(note1, Note) and isinstance(note2, Note):
+        difference = abs(note1.pitch - note2.pitch)
+        interval = difference % 12
+        octave_difference = difference // 12
+    else:
+        pitch1 = 0
+        pitch2 = 0
+        if isinstance(note1, Key):
+            pitch1 = note1.value
+        elif isinstance(note1, Note):
+            pitch1 = note1.pitch
+        if isinstance(note2, Key):
+            pitch2 = note2.value
+        elif isinstance(note2, Note):
+            pitch2 = note2.pitch
+        difference = abs(pitch1 - pitch2)
+        interval = difference % 12
+        octave_difference = 0
+    return pitch_difference_to_fitness(interval) * (dissonance_octave_coefficient ** octave_difference)
+
+def vertical_dissonance_fitness(individual: Individual,
+                                dissonance_octave_coefficient: float)-> float:
+    """Return the fitness of an individual"""
+    fitness = 0
+    notes_in_time = individual.composition.timeline.to_dict()
+    for  notes in notes_in_time.values():
+        for note1 in notes:
+            for note2 in notes:
+                if note1 != note2:
+                    fitness += dissonance_fitness(note1, note2, dissonance_octave_coefficient)
+    return fitness
+
+
+def horizontal_dissonance_fitness(individual: Individual,
+                                  dissonance_octave_coefficient: float)-> float:
+    """Return the fitness of an individual"""
+    fitness = 0
+    notes_in_time = individual.composition.timeline.to_dict()
+    times = list(notes_in_time.keys())
+    times.sort()
+    time = times[0]
+    for i in range(1, len(times) - 1):
+        for note1 in notes_in_time[time]:
+            for note2 in notes_in_time[times[i]]:
+                fitness += dissonance_fitness(note1, note2, dissonance_octave_coefficient)
+        time = times[i]
+    return fitness
+
+def vertical_fitness(individual : Individual,
+                     dissonance_octave_coefficient : float,
+                     ) -> float:
+    """Return the vertical fitness of an individual"""
+    fitness = 0
+    fitness += vertical_dissonance_fitness(individual, dissonance_octave_coefficient)
+    # TODO: Implement
+    return fitness
+
+
+def horizontal_fitness(individual : Individual,
+                       dissonance_octave_coefficient : float,
+                       ) -> float:
+    """Return the horizontal fitness of an individual"""
+    fitness = 0
+    fitness += horizontal_dissonance_fitness(individual, dissonance_octave_coefficient)
+    # TODO: Implement
+    return fitness
+
+# TODO: https://www.secretsofsongwriting.com/2012/04/19/creating-good-progressions-its-all-about-chord-function/
+def fitness(individual: Individual) -> float:
+    """Return the fitness of an individual
+        The more, the better"""
     # TODO: todo
     # - Add checking for simultaneous and consecutive dissonance notes
     # - Check for number of similar notes in chord and melody
@@ -426,7 +589,9 @@ def fitness(individual: Individual) -> float:
     # dominant -> tonic
     # subdominant -> dominant or tonic
     # tonic -> subdominant or dominant
-    fitness = random()
+    fitness = 0
+    fitness += vertical_fitness(individual, 0.5)
+    fitness += horizontal_fitness(individual, 0.5)
     return fitness
 
 
@@ -563,6 +728,11 @@ def main():
         get_initial_population(100, composition),
         1000, 2, 0.1, 2, 2,)
     best_individual = get_best_individual(last_population)
+    # chords = best_individual.genome()
+    # midi = mido.MidiFile(MIDI_FILE_PATH)
+    # clocks_per_beat = midi.ticks_per_beat
+    # midi_chords = chords_to_midi_messages(chords, clocks_per_beat, composition.time_signature)
+    # print(midi_chords)
     print(best_individual.composition.timeline.chords)
 
 
