@@ -4,7 +4,8 @@ from enum import Enum
 from fractions import Fraction
 from math import gcd
 from random import choice, randint, random
-from typing import Callable, Generic, NamedTuple, TypeVar
+from typing import Generic, Literal, NamedTuple, TypeVar
+import argparse
 
 import mido
 import music21
@@ -57,6 +58,48 @@ class Duration(NamedTuple):
             numerator=self.numerator * other,
             denominator=self.denominator
         )
+
+    def __eq__(self, other):
+        first = self.numerator * other.denominator
+        second = self.denominator * other.numerator
+        return first == second
+
+    def __ge__(self, other):
+        first = self.numerator * other.denominator
+        second = self.denominator * other.numerator
+        return first >= second
+
+    def __gt__(self, other):
+        first = self.numerator * other.denominator
+        second = self.denominator * other.numerator
+        return first > second
+
+    def __le__(self, other):
+        first = self.numerator * other.denominator
+        second = self.denominator * other.numerator
+        return first <= second
+
+    def __lt__(self, other):
+        first = self.numerator * other.denominator
+        second = self.denominator * other.numerator
+        return first < second
+
+    def __ne__(self, other):
+        first = self.numerator * other.denominator
+        second = self.denominator * other.numerator
+        return first != second
+
+
+def duration_to_clocks(
+    duration: Duration, clocks_per_beat: int,
+) -> int:
+    """Convert a Duration to the number of clocks"""
+    return int(
+        duration.numerator
+        * clocks_per_beat
+        * 4
+        / duration.denominator
+    )
 
 
 def duration_from_fraction(
@@ -134,10 +177,10 @@ class Note(NamedTuple):
         return self.__str__()
 
 
-class Chord(NamedTuple):
+class Chord_in_keys(NamedTuple):
     """A class representing a chord"""
 
-    notes: list[Pitch] | list[Key]
+    notes: list[Key]
     duration: Duration
 
     def __str__(self):
@@ -147,7 +190,16 @@ class Chord(NamedTuple):
         return self.__str__()
 
     def copy(self):
-        return Chord(self.notes.copy(), self.duration)
+        return Chord_in_keys(self.notes.copy(), self.duration)
+
+    def to_pitches(self, octave: int) -> list[Pitch]:
+        return [note.value + 12 * octave for note in self.notes]
+
+
+class Chord_function(Enum):
+    TONIC = 0
+    SUBDOMINANT = 1
+    DOMINANT = 2
 
 
 T = TypeVar('T')
@@ -173,7 +225,7 @@ class Timeline(NamedTuple):
 
     Start = Duration
     melody: list[Event_in_time[Note]]
-    chords: list[Event_in_time[Chord]]
+    chords: list[Event_in_time[Chord_in_keys]]
 
     def __str__(self):
         res: str = ''
@@ -244,6 +296,22 @@ class Scale(NamedTuple):
 
     def __repr__(self):
         return self.__str__()
+
+
+def get_chord_function(scale: Scale, chord: Chord_in_keys) -> Chord_function:
+    """Return the chord function of a chord"""
+    keys_in_scale = get_keys_in_scale(scale)
+    tonic_roots = [keys_in_scale[0], keys_in_scale[2], keys_in_scale[5]]
+    subdominant_roots = [keys_in_scale[3], keys_in_scale[1]]
+    dominant_roots = [keys_in_scale[4], keys_in_scale[2], keys_in_scale[6]]
+    if chord.notes[0] in tonic_roots:
+        return Chord_function.TONIC
+    elif chord.notes[0] in subdominant_roots:
+        return Chord_function.SUBDOMINANT
+    elif chord.notes[0] in dominant_roots:
+        return Chord_function.DOMINANT
+    else:
+        raise ValueError(f'Chord {chord} is not in scale {scale}')
 
 
 def get_keys_in_scale(scale: Scale) -> list[Key]:
@@ -387,66 +455,100 @@ def get_composition(midi_file_path: str) -> Composition:
         length=timeline.get_length(),
     )
 
-# TODO: implement
-# def chords_to_midi_messages(
-#     chords: list[Event_in_time[Chord]], clocks_per_beat: int, time_signature: Time_signature
-# ) -> list[mido.Message]:
-#     """Convert a list of chords to a list of midi messages"""
-#     messages: list[mido.Message] = []
-    # current_time = Fraction(0, 1)
-    # for chord in chords:
-    #     for note in chord.notes:
-    #         if isinstance(note, Note):
-    #             messages.append(
-    #                 mido.Message(
-    #                     'note_on',
-    #                     note=note.pitch,
-    #                     velocity=50,
-    #                     time=int(
-    #                         current_time
-    #                         * clocks_per_beat
-    #                         * 4
-    #                         / Fraction(time_signature.denominator, 1)
-    #                     ),
-    #                 )
-    #             )
-    #         else:
-    #             raise ValueError('Chord should consist of notes with fixed pitch')
-    #     current_time += Fraction(chord.duration.numerator, chord.duration.denominator)
-    #     for note in chord.notes:
-    #         if isinstance(note, Note):
-    #             messages.append(
-    #                 mido.Message(
-    #                     'note_off',
-    #                     note=note.pitch,
-    #                     velocity=50,
-    #                     time=int(
-    #                         current_time
-    #                         * clocks_per_beat
-    #                         * 4
-    #                         / Fraction(time_signature.denominator, 1)
-    #                     ),
-    #                 )
-    #             )
-    #         else:
-    #             raise ValueError('Chord should consist of notes with fixed pitch')
-    # return messages
 
-# def add_chords_to_midi(midi_file : mido.MidiFile, list[Chord]) -> mido.MidiFile:
-#     """Add chords to a midi file"""
-#     for chord in list[Chord]:
-#         if isinstance(chord.notes, list[Note]):
-#             for note in chord.notes:
-#                 midi_file.tracks[1].append(mido.Message('note_on', note=note.pitch)
+def __get_midi_from_note_list(
+        notes: list[Event_in_time[Note]], clocks_per_beat: int,
+) -> mido.MidiTrack:
+    """Convert a notes to a midi track"""
+    track = mido.MidiTrack()
+    track.append(mido.MetaMessage('track_name', name='Elec. Piano (Classic)',
+                                  time=0))
+    events: dict[int, list[Note]] = {}
+    for note in notes:
+        time = duration_to_clocks(note.start, clocks_per_beat)
+        if time in events:
+            events[time].append(note.event)
+        else:
+            events[time] = [note.event]
+    start_times: list[int] = list(events.keys())
+    note_events: dict[
+        int, list[tuple[Note, Literal['note_on'] | Literal['note_off']]]] = {}
+    for time in start_times:
+        for event in events[time]:
+            if time in note_events:
+                note_events[time].append((event, 'note_on'))
+            else:
+                note_events[time] = [(event, 'note_on')]
+
+            duration = duration_to_clocks(event.duration, clocks_per_beat)
+            if time + duration in note_events:
+                note_events[time + duration].append((event, 'note_off'))
+            else:
+                note_events[time + duration] = [(event, 'note_off')]
+
+    times = list(note_events.keys())
+    times.sort()
+    previous_time_in_clocks = 0
+    for time in times:
+        on_events = list(
+            filter(lambda e: e[1] == 'note_on', note_events[time])
+        )
+        off_events = list(
+            filter(lambda e: e[1] == 'note_off', note_events[time])
+        )
+        for event in off_events:
+            track.append(
+                mido.Message(
+                    'note_off',
+                    note=event[0].pitch,
+                    velocity=100,
+                    time=time - previous_time_in_clocks,
+                )
+            )
+            previous_time_in_clocks = time
+        for event in on_events:
+            track.append(
+                mido.Message(
+                    'note_on',
+                    note=event[0].pitch,
+                    velocity=50,
+                    time=time - previous_time_in_clocks,
+                )
+            )
+            previous_time_in_clocks = time
+    track.append(mido.MetaMessage('end_of_track', time=0))
+    return track
 
 
-def get_basic_chords_in_scale(scale: Scale, duration: Duration) -> list[Chord]:
+def write_midi_from_track(
+        track: mido.MidiTrack, clocks_per_beat: int, bpm: BPM, file_path: str
+) -> None:
+    """Write a midi track to a file"""
+    midi_file = mido.MidiFile()
+    midi_file.ticks_per_beat = clocks_per_beat
+    midi_file.type = 1
+
+    info_track = mido.MidiTrack()
+    info_track.append(mido.MetaMessage('track_name', name='Info', time=0))
+    info_track.append(mido.MetaMessage(
+                          'time_signature', numerator=4, denominator=4))
+    info_track.append(mido.MetaMessage('set_tempo', tempo=mido.bpm2tempo(bpm)))
+    info_track.append(mido.MetaMessage('end_of_track', time=0))
+
+    midi_file.tracks.append(info_track)
+    midi_file.tracks.append(track)
+
+    midi_file.save(file_path)
+
+
+def get_basic_chords_in_scale(
+        scale: Scale, duration: Duration) -> list[Chord_in_keys]:
     """Return the chords in a scale"""
     keys = get_keys_in_scale(scale)
     chords = []
     for i in range(0, len(keys)):
         chords.append(
-            Chord(
+            Chord_in_keys(
                 notes=[
                     keys[i],
                     keys[(i + 2) % len(keys)],
@@ -457,12 +559,35 @@ def get_basic_chords_in_scale(scale: Scale, duration: Duration) -> list[Chord]:
         )
     return chords
 
+# -------------------------- Configuration --------------------------------
+
+
+POPULATION_SIZE = 100
+NUMBER_OF_GENERATIONS = 500
+NUMBER_OF_ELITE = 30
+MUTATION_PROBABILITY = 0.03
+NUMBER_OF_CROSSOVERS = 20
+NUMBER_OF_INDIVIDUALS_TO_CROSSOVER = 2
+CHORD_DURATION = Duration(1, 2)
+VERTICAL_DISSONANCE_OCTAVE_COEFFICIENT = 0.5
+HORIZONTAL_DISSONANCE_OCTAVE_COEFFICIENT = 0.5
+VERTICAL_DISSONANCE_COEFFICIENT = 1000
+HORIZONTAL_DISSONANCE_COEFFICIENT = 1
+HARMONIC_MOVEMENTS_COFFICIENT = 100
+REPETITION_PENALTY = 100
+
+
+# ----------------------- Genetic algorithm --------------------------------
+
 
 class Individual(NamedTuple):
     composition: Composition
 
     def genome(self):
         return self.composition.timeline.chords
+
+    def copy(self):
+        return Individual(self.composition.copy())
 
 
 class Population(NamedTuple):
@@ -476,7 +601,7 @@ def pitch_difference_to_fitness(pitch_difference: int) -> float:
     """Return the fitness of a pitch difference"""
     difference_in_octave = abs(pitch_difference) % 12
     if (difference_in_octave == 0 or
-        difference_in_octave == 5):
+            difference_in_octave == 5):
         return 1
     elif (difference_in_octave == 1 or
           difference_in_octave == 11):
@@ -495,10 +620,10 @@ def pitch_difference_to_fitness(pitch_difference: int) -> float:
     else:
         raise ValueError('Invalid pitch difference')
 
+
 def dissonance_fitness(note1: Note | Key, note2: Note | Key,
                        dissonance_octave_coefficient: float) -> float:
     """Return the fitness of an individual"""
-    # check if notes are of type Note
     difference = 0
     interval = 0
     octave_difference = 0
@@ -520,23 +645,27 @@ def dissonance_fitness(note1: Note | Key, note2: Note | Key,
         difference = abs(pitch1 - pitch2)
         interval = difference % 12
         octave_difference = 0
-    return pitch_difference_to_fitness(interval) * (dissonance_octave_coefficient ** octave_difference)
+
+    octave_fitness = (dissonance_octave_coefficient ** octave_difference)
+    return pitch_difference_to_fitness(interval) * octave_fitness
+
 
 def vertical_dissonance_fitness(individual: Individual,
-                                dissonance_octave_coefficient: float)-> float:
+                                dissonance_octave_coefficient: float) -> float:
     """Return the fitness of an individual"""
     fitness = 0
     notes_in_time = individual.composition.timeline.to_dict()
-    for  notes in notes_in_time.values():
+    for notes in notes_in_time.values():
         for note1 in notes:
             for note2 in notes:
                 if note1 != note2:
-                    fitness += dissonance_fitness(note1, note2, dissonance_octave_coefficient)
+                    fitness += dissonance_fitness(
+                        note1, note2, dissonance_octave_coefficient)
     return fitness
 
 
-def horizontal_dissonance_fitness(individual: Individual,
-                                  dissonance_octave_coefficient: float)-> float:
+def horizontal_dissonance_fitness(
+        individual: Individual, dissonance_octave_coefficient: float) -> float:
     """Return the fitness of an individual"""
     fitness = 0
     notes_in_time = individual.composition.timeline.to_dict()
@@ -546,52 +675,124 @@ def horizontal_dissonance_fitness(individual: Individual,
     for i in range(1, len(times) - 1):
         for note1 in notes_in_time[time]:
             for note2 in notes_in_time[times[i]]:
-                fitness += dissonance_fitness(note1, note2, dissonance_octave_coefficient)
+                fitness += dissonance_fitness(
+                    note1, note2, dissonance_octave_coefficient)
         time = times[i]
     return fitness
 
-def vertical_fitness(individual : Individual,
-                     dissonance_octave_coefficient : float,
-                     ) -> float:
+
+def vertical_fitness(
+        individual: Individual, dissonance_octave_coefficient: float,
+        dissonance_coefficient: float) -> float:
     """Return the vertical fitness of an individual"""
     fitness = 0
-    fitness += vertical_dissonance_fitness(individual, dissonance_octave_coefficient)
-    # TODO: Implement
+    fitness += dissonance_coefficient * vertical_dissonance_fitness(
+        individual, dissonance_octave_coefficient)
     return fitness
 
 
-def horizontal_fitness(individual : Individual,
-                       dissonance_octave_coefficient : float,
-                       ) -> float:
+def movement_prioritized(function1: Chord_function,
+                         function2: Chord_function) -> bool:
+    """Return if movement is prioritized(one from the list):
+         dominant -> tonic
+         subdominant -> dominant or tonic
+         tonic -> subdominant or dominant
+    """
+    if function1 == Chord_function.DOMINANT:
+        if function2 == Chord_function.TONIC:
+            return True
+    elif function1 == Chord_function.SUBDOMINANT:
+        if (function2 == Chord_function.DOMINANT or
+                function2 == Chord_function.TONIC):
+            return True
+    elif function1 == Chord_function.TONIC:
+        if (function2 == Chord_function.SUBDOMINANT or
+                function2 == Chord_function.DOMINANT):
+            return True
+    return False
+
+
+def harmonic_movements_fitness(individual: Individual) -> float:
+    """Return the fitness of an individual based on the harmonic movements"""
+    fitness = 0
+    notes_in_time = individual.composition.timeline.chords
+    chord_dict: dict[Duration, Chord_in_keys] = {}
+    for chord in notes_in_time:
+        chord_dict[chord.start] = chord.event
+
+    times = list(chord_dict.keys())
+    times.sort()
+    if len(times) == 0:
+        return 0
+    previous_chord_function = get_chord_function(individual.composition.scale,
+                                                 chord_dict[times[0]])
+    for i in range(1, len(times) - 1):
+        next_chord_function = get_chord_function(individual.composition.scale,
+                                                 chord_dict[times[i]])
+        if movement_prioritized(previous_chord_function, next_chord_function):
+            fitness += 1
+
+    return fitness
+
+
+def get_repetition_penalty(individual: Individual) -> float:
+    """Return the fitness of an individual based on the repetition penalty"""
+    fitness = 0
+    notes_in_time = individual.composition.timeline.chords
+    chord_dict: dict[Duration, Chord_in_keys] = {}
+    for chord in notes_in_time:
+        chord_dict[chord.start] = chord.event
+
+    times = list(chord_dict.keys())
+    times.sort()
+    if len(times) == 0:
+        return 0
+
+    # calculate sum of distances between the same chords and sum up for all of
+    # the chords
+    for i in range(0, len(times) - 1):
+        for j in range(i + 1, len(times)):
+            if chord_dict[times[i]] == chord_dict[times[j]]:
+                fraction1 = times[i].numerator / times[i].denominator
+                fraction2 = times[j].numerator / times[j].denominator
+                fitness += 1/abs(fraction1 - fraction2)
+
+    return -fitness
+
+
+def horizontal_fitness(
+        individual: Individual,
+        dissonance_octave_coefficient: float,
+        dissonance_coefficient: float,
+        harmonic_movements_cofficient: float,
+        repetition_penalty: float) -> float:
     """Return the horizontal fitness of an individual"""
     fitness = 0
-    fitness += horizontal_dissonance_fitness(individual, dissonance_octave_coefficient)
-    # TODO: Implement
+    fitness += dissonance_coefficient * horizontal_dissonance_fitness(
+        individual, dissonance_octave_coefficient)
+    fitness += harmonic_movements_cofficient * harmonic_movements_fitness(
+            individual)
+    fitness += repetition_penalty * get_repetition_penalty(individual)
+    # print(repetition_penalty * get_repetition_penalty(individual))
     return fitness
 
-# TODO: https://www.secretsofsongwriting.com/2012/04/19/creating-good-progressions-its-all-about-chord-function/
+
 def fitness(individual: Individual) -> float:
     """Return the fitness of an individual
         The more, the better"""
-    # TODO: todo
-    # - Add checking for simultaneous and consecutive dissonance notes
-    # - Check for number of similar notes in chord and melody
-    #   - Hovewer, this coefficient shouldn't be big, otherwise it will sound
-    #   bad https://youtu.be/TqJ8M2GfenI
-    #   - When checking it also chords on сильных долях should have more
-    #   priority https://youtu.be/TqJ8M2GfenI, but 2 notes in the same chord
-    #   на слабых долях should have more impact then one note on сильной доле
-    # - If there wasn't tonic chord in more than 8/4 there should be penalty
-    # Everything can be separated into 2 parameters how well it sounds
-    # vertically and how well it sounds horizontally
-
-    # This movemements should have really high priority:
-    # dominant -> tonic
-    # subdominant -> dominant or tonic
-    # tonic -> subdominant or dominant
     fitness = 0
-    fitness += vertical_fitness(individual, 0.5)
-    fitness += horizontal_fitness(individual, 0.5)
+    fitness += vertical_fitness(
+        individual,
+        VERTICAL_DISSONANCE_OCTAVE_COEFFICIENT,
+        VERTICAL_DISSONANCE_COEFFICIENT
+    )
+    fitness += horizontal_fitness(
+        individual,
+        HORIZONTAL_DISSONANCE_OCTAVE_COEFFICIENT,
+        HORIZONTAL_DISSONANCE_COEFFICIENT,
+        HARMONIC_MOVEMENTS_COFFICIENT,
+        REPETITION_PENALTY
+    )
     return fitness
 
 
@@ -606,16 +807,23 @@ def mutate(individual: Individual, probability: float) -> Individual:
                                                genome[i].event.duration)
             chord_number = randint(0, len(chords) - 1)
             genome[i] = Event_in_time(chords[chord_number], genome[i].start)
-    return Individual(Composition(individual.composition.bpm,
-                                  individual.composition.time_signature,
-                                  Timeline([], genome),
-                                  individual.composition.length,
-                                  individual.composition.scale))
+
+    new_individual = Individual(Composition(individual.composition.bpm,
+                                individual.composition.time_signature,
+                                Timeline([], genome),
+                                individual.composition.length,
+                                individual.composition.scale))
+    # print("Mutated")
+    # print(individual)
+    # print(new_individual)
+    return new_individual
 
 
 def crossover(individuals: list[Individual],
               number_of_crossovers: int) -> list[Individual]:
     """Crossover list of individuals"""
+    if len(individuals) == 0:
+        raise ValueError("Individuals list is empty, not able to crossover")
     new_individuals = individuals.copy()
     for _ in range(0, number_of_crossovers):
         individual1 = choice(new_individuals)
@@ -650,17 +858,30 @@ def get_worst(
 
 def get_random_individual(composition: Composition) -> Individual:
     """Return a random individual"""
-    chord_duration = duration_from_fraction(Fraction(1, 4),
-                                            composition.time_signature)
+    chord_duration = CHORD_DURATION
     composition_duration = composition.length
     composition_with_random_chords = composition.copy()
     chords = get_basic_chords_in_scale(composition.scale, chord_duration)
     for i in range(0, int(composition_duration / chord_duration)):
         chord_number = randint(0, len(chords) - 1)
         composition_with_random_chords.timeline.chords.append(
-            Event_in_time[Chord](chords[chord_number], chord_duration * i)
+            Event_in_time[Chord_in_keys](
+                chords[chord_number], chord_duration * i)
         )
-    return Individual(composition_with_random_chords)
+    return Individual(composition_with_random_chords).copy()
+
+
+def average_population_fitness(population: Population) -> float:
+    """Return the average fitness of a population"""
+    fitness_sum = 0
+    for individual in population.individuals:
+        fitness_sum += fitness(individual)
+    return fitness_sum / len(population.individuals)
+
+
+def best_population_fitness(population: Population) -> float:
+    """Return the best fitness of a population"""
+    return fitness(max(population.individuals, key=lambda i: fitness(i)))
 
 
 def get_initial_population(
@@ -686,20 +907,15 @@ def get_next_generation(population: Population,
                         number_of_individuals_to_crossover: int) -> Population:
     """Return the next generation"""
     elite = get_best(elite_number, population)
-    not_elite = Population(get_worst(elite_number, population))
     crossover_individuals = get_best(number_of_individuals_to_crossover,
-                                     not_elite)
-    not_crossed_over_individuals = get_best(number_of_individuals_to_crossover,
-                                            not_elite)
+                                     population)
+    new_individuals = crossover(crossover_individuals, crossover_number).copy()
+    new_individuals.extend(elite.copy())
+    new_individuals = [
+        mutate(i, mutation_probability) for i in new_individuals]
 
-    new_individuals = crossover(crossover_individuals, crossover_number)
-    new_individuals.extend(not_crossed_over_individuals)
-
-    for i in range(0, len(new_individuals)):
-        new_individuals[i] = mutate(new_individuals[i], mutation_probability)
-
-    new_individuals.extend(elite)
-    return Population(new_individuals)
+    # print("Size: ", len(new_individuals))
+    return Population(new_individuals).copy()
 
 
 def genetic_algorithm(
@@ -711,29 +927,66 @@ def genetic_algorithm(
     number_of_individuals_to_crossover: int
 ) -> Population:
     """Return the best individual"""
-    generations = [initial_population]
-    for _ in range(number_of_generations):
-        next = get_next_generation(generations[-1], elite_number,
-                                   mutation_probability,
-                                   crossover_number,
-                                   number_of_individuals_to_crossover)
-        generations.append(next)
-    return generations[-1]
+    generation = initial_population
+    for i in range(number_of_generations):
+        generation = get_next_generation(generation, elite_number,
+                                         mutation_probability,
+                                         crossover_number,
+                                         number_of_individuals_to_crossover)
+        print(f"{i} best fitness: {best_population_fitness(generation)}")
+    return generation
+
+
+def chords_to_notes(chords: list[
+                    Event_in_time[Chord_in_keys]],
+                    octave: int) -> list[Event_in_time[Note]]:
+    """Return a list of notes from a list of chords"""
+    notes: list[Event_in_time[Note]] = []
+    for chord in chords:
+        for note in chord.event.notes:
+            notes.append(Event_in_time[Note](
+                Note(
+                    note.value + octave * 12,
+                    chord.event.duration,
+                ),
+                chord.start,
+            ))
+    return notes
+
+
+parser = argparse.ArgumentParser(description="Genetic algorithm")
+parser.add_argument('path', type=str, help="Path to the midi file")
+# parser.add_argument(
+# 'number_of_generations', type=int,  help="Number of generations")
 
 
 def main():
-    MIDI_FILE_PATH = os.getcwd() + '/resources/barbiegirl_mono.mid'
-    composition = get_composition(MIDI_FILE_PATH)
+    args = parser.parse_args()
+    input_path = ''
+    if os.path.isabs(args.path):
+        input_path = args.path
+    else:
+        input_path = os.getcwd() + '/' + args.path
+
+    output_path = input_path.replace('.mid', '_output.mid')
+    composition = get_composition(input_path)
     last_population = genetic_algorithm(
-        get_initial_population(100, composition),
-        1000, 2, 0.1, 2, 2,)
+        get_initial_population(POPULATION_SIZE, composition),
+        NUMBER_OF_GENERATIONS,
+        NUMBER_OF_ELITE,
+        MUTATION_PROBABILITY,
+        NUMBER_OF_CROSSOVERS,
+        NUMBER_OF_INDIVIDUALS_TO_CROSSOVER
+    )
     best_individual = get_best_individual(last_population)
-    # chords = best_individual.genome()
-    # midi = mido.MidiFile(MIDI_FILE_PATH)
-    # clocks_per_beat = midi.ticks_per_beat
-    # midi_chords = chords_to_midi_messages(chords, clocks_per_beat, composition.time_signature)
-    # print(midi_chords)
-    print(best_individual.composition.timeline.chords)
+    midi = mido.MidiFile(input_path)
+    clocks_per_beat = midi.ticks_per_beat
+    chords_in_keys = best_individual.genome()
+    chords = chords_to_notes(chords_in_keys, 4)
+    notes = composition.timeline.melody + chords
+    track = __get_midi_from_note_list(notes, clocks_per_beat)
+    bpm = composition.bpm
+    write_midi_from_track(track, clocks_per_beat, bpm, output_path)
 
 
 if __name__ == '__main__':
