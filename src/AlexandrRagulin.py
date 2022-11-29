@@ -310,7 +310,11 @@ class Scale(NamedTuple):
     mode: Mode
 
     def __str__(self):
-        return f'{self.key} {self.mode.name}'
+        match self.mode:
+            case Mode.MAJOR:
+                return f'{self.key}'
+            case Mode.MINOR:
+                return f'{self.key}m'
 
     def __repr__(self):
         return self.__str__()
@@ -986,7 +990,6 @@ def main():
     else:
         input_path = os.getcwd() + '/' + args.path
 
-    output_path = input_path.replace('.mid', '_output.mid')
     composition = get_composition(input_path)
     last_population = genetic_algorithm(
         get_initial_population(POPULATION_SIZE, composition),
@@ -1004,7 +1007,10 @@ def main():
     notes = composition.timeline.melody + chords
     track = __get_midi_from_note_list(notes, clocks_per_beat)
     bpm = composition.bpm
+
+    output_path = input_path.replace('.mid', f'_{composition.scale}_output.mid')
     write_midi_from_track(track, clocks_per_beat, bpm, output_path)
+    print(composition.scale)
 
 
 if __name__ == '__main__':
