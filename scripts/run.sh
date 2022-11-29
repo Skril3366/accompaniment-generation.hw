@@ -1,7 +1,7 @@
 #!/bin/bash
 
 run() {
-	python ./src/AlexandrRagulin.py "$@"
+	python ./src/main.py "$@"
 }
 
 __run__info(){
